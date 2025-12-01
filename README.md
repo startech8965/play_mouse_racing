@@ -39,7 +39,21 @@ Use this README as a quick reference for the files currently in the project and 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r gymnasium
+gymnasium[box2d]
+stable-baselines3
+torch
+pygame
+box2d-py
+numpy
+matplotlib
+pandas
+scipy
+imageio
+imageio-ffmpeg
+opencv-python
+tensorboard
+moviepy
 ```
 
 Notes:
