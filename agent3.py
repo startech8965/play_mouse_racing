@@ -4,7 +4,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.atari_wrappers import WarpFrame
 from stable_baselines3.common.vec_env import VecFrameStack, VecVideoRecorder
-from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
+from stable_baselines3.common.callbacks import BaseCallback, EvalCallback, CallbackList
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import VecTransposeImage
 from stable_baselines3.common.env_checker import check_env 
@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-log_dir = "./logs/MouseRacing_v"
+log_dir = "./logs/MouseRacing_2"
 video_dir = os.path.join(log_dir, "videos")
 os.makedirs(video_dir, exist_ok=True)
 
@@ -39,7 +39,7 @@ from GrayWrapper import GrayWrapper
 
 def make_env():
     env = gym.make("MouseRacing-v0", max_episode_steps=1000)
-    env = Monitor(GrayWrapper(env), "./logs/MouseRacing_v")
+    env = Monitor(GrayWrapper(env), "./logs/MouseRacing_2")
     return env
 
 def make_eval_env(record_video=True, video_folder=video_dir, video_length=1000, name_prefix=None):
@@ -83,7 +83,7 @@ def make_eval_env(record_video=True, video_folder=video_dir, video_length=1000, 
 class VideoEvalCallback(BaseCallback):
     """Custom callback for recording videos during evaluation"""
     
-    def __init__(self, eval_env, eval_freq=25000, n_eval_episodes=5, video_freq=4, verbose=0):
+    def __init__(self, eval_env, eval_freq=25000, n_eval_episodes=5, video_freq=4, verbose=0, log_dir="./"):
         super(VideoEvalCallback, self).__init__(verbose)
         self.eval_env = eval_env
         self.eval_freq = eval_freq
@@ -91,7 +91,20 @@ class VideoEvalCallback(BaseCallback):
         self.video_freq = video_freq  # Record video every N evaluations
         self.best_mean_reward = -np.inf
         self.evaluation_number = 0
-        
+        self.log_dir = log_dir
+        os.makedirs("./eval/", exist_ok=True)
+    
+    def convert_numpy_tolist(obj):
+        """Convert numpy arrays in a nested structure to lists for JSON serialization."""
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, dict):
+            return {k: VideoEvalCallback.convert_numpy_tolist(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [VideoEvalCallback.convert_numpy_tolist(i) for i in obj]
+        else:
+            return obj
+
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_freq == 0:
             self.evaluation_number += 1
@@ -125,7 +138,13 @@ class VideoEvalCallback(BaseCallback):
                 action, _ = self.model.predict(obs, deterministic=True)
                 obs, rewards, done, info = video_env.step(action)
                 info_trajectory[t] = info
-            with open("./eval/info_dict_{}.json".format("%04d" % self.evaluation_number), "w") as info_dict_handler:
+                out = video_env.step(action)
+
+                # VecEnv/Gymnasium can return 4- or 5-tuple. Handle both.
+                if len(out) == 5:
+                    obs, rewards, terminated, truncated, infos = out
+                    done = bool(terminated[0] or truncated[0])
+            with open("{}/eval/info_dict_{}.json".format(self.log_dir, "%04d" % self.evaluation_number), "w") as info_dict_handler:
                 json.dump(info_trajectory, info_dict_handler, indent=4)
                 info_dict_handler.close()
             
@@ -151,7 +170,7 @@ def plot_training_results(log_dir, window=10):
     """Plot training results from the evaluation logs."""
     try:
         # Load evaluation results
-        eval_file = os.path.join(log_dir, "evaluations_v.npz")
+        eval_file = os.path.join(log_dir, "evaluations_2.npz")
         if os.path.exists(eval_file):
             # Load from .npz file
             data = np.load(eval_file)
@@ -165,7 +184,7 @@ def plot_training_results(log_dir, window=10):
             
         else:
             # Try to load from CSV (older format)
-            csv_file = os.path.join(log_dir, "evaluations_v.csv")
+            csv_file = os.path.join(log_dir, "evaluations_2.csv")
             if os.path.exists(csv_file):
                 eval_df = pd.read_csv(csv_file)
                 timesteps = eval_df['timesteps'].values
@@ -214,7 +233,7 @@ def plot_training_results(log_dir, window=10):
             ax2.grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig(os.path.join(log_dir, 'training_progress_v.png'), dpi=150, bbox_inches='tight')
+        plt.savefig(os.path.join(log_dir, 'training_progress_2.png'), dpi=150, bbox_inches='tight')
         plt.show()
         
         print(f"Final mean reward: {mean_rewards[-1]:.2f} ± {std_rewards[-1]:.2f}")
@@ -249,7 +268,7 @@ def plot_final_evaluation(mean_reward, std_reward, eval_episodes=20):
     ax2.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig(os.path.join(log_dir, 'final_evaluation_v.png'), dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(log_dir, 'final_evaluation_2.png'), dpi=150, bbox_inches='tight')
     plt.show()
 
 def plot_monitor_results(log_dir):
@@ -339,7 +358,7 @@ def record_final_video(model, num_episodes=3):
 
 if __name__ == "__main__":
     # Ensure log directory exists (TraceRecordingWrapper may write here)
-    log_dir = "./logs/MouseRacing_v"
+    log_dir = "./logs/MouseRacing_2"
     video_dir = os.path.join(log_dir, "videos")
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(video_dir, exist_ok=True)
@@ -369,9 +388,12 @@ if __name__ == "__main__":
     video_eval_callback = VideoEvalCallback(
          eval_env=env_val,
          eval_freq=20000,
-         n_eval_episodes=20,
+         n_eval_episodes=1,
          video_freq=1  # Record video every __ evaluations
+            ,log_dir=log_dir
     )
+
+    Combined_Callbacks = CallbackList([eval_callback, video_eval_callback])
 
     # Initialize PPO
     model = PPO('CnnPolicy', env, verbose=1, ent_coef=0.005, 
@@ -388,10 +410,10 @@ if __name__ == "__main__":
     # Train the model with 1,000,000 timesteps
     model.learn(total_timesteps=1000000,
                 progress_bar=True,
-                callback=video_eval_callback)  # or use video_eval_callback
+                callback=Combined_Callbacks)  # or use video_eval_callback
 
     # Save the model
-    model.save(os.path.join(log_dir, "ppo_mouse_racing_v"))
+    model.save(os.path.join(log_dir, "ppo_mouse_racing_2"))
     print("Training completed!")
 
     # Evaluate the model using the frame-stacked evaluation env
