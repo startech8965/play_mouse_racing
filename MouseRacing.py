@@ -582,6 +582,7 @@ class MouseRacing(gym.Env, EzPickle):
 
     def step(self, action):
         step_reward = 0
+        leak_detected = False
         assert self.car is not None
         if action is not None:
             if self.continuous:
@@ -610,20 +611,20 @@ class MouseRacing(gym.Env, EzPickle):
         # Missed-leak penalty: track if car was ever close to a leaky tile, and penalize if it moves away without fixing
         car_pos = self.car.hull.position
         info = {"leak_tile_stats": "tn"}  # true negative by default
-        for idx, tile_info in self.leaky_tiles.items():
-            if tile_info.get("fixed", False) or tile_info.get("missed", False):
-                continue
-            tile_pos = tile_info["position"][-2:]
-            dist = np.linalg.norm(np.array(car_pos) - np.array(tile_pos))
-            # Use a larger threshold for detection
-            close_thresh = TRACK_WIDTH * 2.5
-            if dist < close_thresh:
-                self.leaky_tiles[idx]["was_close"] = True
-            if tile_info.get("was_close", False) and dist > close_thresh:
-                print(f"Missed leaky tile at index {idx} (position: {tile_pos})")
-                step_reward -= 20 * LEAK_SCALE  # Penalty for missing a leaky tile (20)
-                self.leaky_tiles[idx]["missed"] = True
-                info["leak_tile_stats"] = "fn" # false negative
+        #        for idx, tile_info in self.leaky_tiles.items():
+        #            if tile_info.get("fixed", False) or tile_info.get("missed", False):
+        #                continue
+        #            tile_pos = tile_info["position"][-2:]
+        #            dist = np.linalg.norm(np.array(car_pos) - np.array(tile_pos))
+        #            # Use a larger threshold for detection
+        #            close_thresh = TRACK_WIDTH * 2.5
+        #            if dist < close_thresh:
+        #                self.leaky_tiles[idx]["was_close"] = True
+        #            if tile_info.get("was_close", False) and dist > close_thresh:
+        #                print(f"Missed leaky tile at index {idx} (position: {tile_pos})")
+        #                step_reward -= 20 * LEAK_SCALE  # Penalty for missing a leaky tile (20)
+        #                self.leaky_tiles[idx]["missed"] = True
+        #                info["leak_tile_stats"] = "fn" # false negative
 
         # If the detect_leak action is triggered, try to detect a nearby leaky tile
         if self.continuous and action is not None:
@@ -645,30 +646,31 @@ class MouseRacing(gym.Env, EzPickle):
                             closest_idx = idx
                 # If close enough, detect the leak and give reward
                 if closest_idx is not None and closest_dist < TRACK_WIDTH * 2:
-                    if not self.leaky_tiles[closest_idx].get("fixed", False):
+                    if self.leaky_tiles[closest_idx].get("fixed", False):
                         self.leaky_tiles[closest_idx]["fixed"] = True
                         self.leaky_tiles[closest_idx]["color"] = (0, 255, 0)
                         step_reward += 50 * LEAK_SCALE  # Reward for detecting a leak (50)
                         self.leaky_tiles[closest_idx]["was_close"] = True
                         leak_detected = True
                         info["leak_tile_stats"] = "tp" # true positive
-                else:
-                    # If not close enough to any leaky tile, penalize for false detect or missed leak
-                    missed_any = False
-                    for idx, tile_info in self.leaky_tiles.items():
-                        if not tile_info.get("fixed", False):
-                            tile_pos = tile_info["position"][-2:]
-                            dist = np.linalg.norm(np.array(car_pos) - np.array(tile_pos))
-                            if dist < TRACK_WIDTH * 4:
-                                if not tile_info.get("missed", False):
-                                    step_reward -= 20 * LEAK_SCALE # Penalty for missing a leak (20)
-                                    self.leaky_tiles[idx]["missed"] = True
-                                    missed_any = True
-                                    info["leak_tile_stats"] = "fn" # false negative
-                    if not missed_any:
-                        step_reward -= 2 * LEAK_SCALE  # Penalty for trying to detect where there is no leak (2)
-                        info["leak_tile_stats"] = "fp" # false positive
+                if not leak_detected:
+                    step_reward -= 2 * LEAK_SCALE  # Penalty for trying to detect where there is no leak (2)
+                    info["leak_tile_stats"] = "fp" # false positive
                     leak_detected = False
+            else:# If not close enough to any leaky tile, penalize for false detect or missed leak
+                missed_any = False
+                for idx, tile_info in self.leaky_tiles.items():
+                    if tile_info.get("fixed", False):
+                        tile_pos = tile_info["position"][-2:]
+                        dist = np.linalg.norm(np.array(car_pos) - np.array(tile_pos))
+                        if dist < TRACK_WIDTH * 4:
+                            if tile_info.get("missed", False):
+                                step_reward -= 20 * LEAK_SCALE # Penalty for missing a leak (20)
+                                self.leaky_tiles[idx]["missed"] = True
+                                self.leaky_tiles[idx]["color"] = (255, 0, 0)
+                                missed_any = True
+                                info["leak_tile_stats"] = "fn" # false negative
+                leak_detected = False
 
         self.car.step(1.0 / FPS)
         self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
